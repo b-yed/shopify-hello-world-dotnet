@@ -3,12 +3,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Shopify_HelloWorld_dotNet.Models;
 using System;
+using System.Collections;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Web;
 
 namespace Shopify_HelloWorld_dotNet.Controllers
 {
@@ -65,7 +68,25 @@ namespace Shopify_HelloWorld_dotNet.Controllers
             var apiSecret = _config["ApiSecret"];
             var apiKey = _config["ApiKey"];
 
-            //TODO - Validate hmac
+            //Validate hmac
+            var validateQueryString = HttpUtility.ParseQueryString(HttpContext.Request.QueryString.Value);
+            validateQueryString.Remove("hmac");
+            //Sort the keys lexographically
+            var sortedKeys = validateQueryString.AllKeys.OrderBy(r => r);
+            var parsedQueryString = new StringBuilder();
+            foreach(var key in sortedKeys)
+            {
+                parsedQueryString.Append($"&{key}={validateQueryString[key]}");
+            }
+
+            //Remove the first &
+            parsedQueryString.Remove(0, 1);
+
+            var hashedQueryString = HashHMAC(StringEncode(apiSecret), StringEncode(parsedQueryString.ToString()));
+            if (! hashedQueryString.Equals(hmac, StringComparison.OrdinalIgnoreCase))
+            {
+                return Unauthorized("HMAC is invalid");
+            }
 
             //Get an access token
             var response = await _client.PostAsync($"https://{shop}/admin/oauth/access_token", new StringContent(
@@ -110,6 +131,18 @@ namespace Shopify_HelloWorld_dotNet.Controllers
                 Rnd.GetBytes(ByteArray);
             }
             return Convert.ToBase64String(ByteArray);
+        }
+
+        private string HashHMAC(byte[] key, byte[] message)
+        {
+            var hash = new HMACSHA256(key);
+            return BitConverter.ToString(hash.ComputeHash(message)).Replace("-", "").ToLower();
+        }
+
+        private byte[] StringEncode(string text)
+        {
+            var encoding = new UTF8Encoding();
+            return encoding.GetBytes(text);
         }
     }
 }
